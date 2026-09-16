@@ -592,6 +592,10 @@
     <div class="card">
       <p style="margin:0;font-size:0.78rem;color:var(--ink-soft);">Semua data disimpan terus dalam artifak ini dan hanya boleh diakses oleh anda. Tiada data dikongsi melainkan anda kongsikan pautan artifak ini.</p>
     </div>
+
+    <div class="section-title">Diagnostik sambungan<small>Screenshot ini kalau bermasalah</small></div>
+    <div class="card" id="diagBox" style="font-family:'IBM Plex Mono',monospace;font-size:0.72rem;line-height:1.7;white-space:pre-wrap;word-break:break-all;"></div>
+    <button class="btn btn-block" id="btnRefreshDiag" style="margin-top:8px;">Cuba sambung semula</button>
   </div>
 
   <div class="navbar" id="navbar">
@@ -693,10 +697,43 @@
     document.getElementById('syncDot').classList.toggle('busy', !!busy);
   }
 
+  /* ============ diagnostics (visible in Tetapan, no DevTools needed) ============ */
+  var diag = {
+    scriptLoaded: !!window.supabase,
+    supabaseConfigured: supabaseConfigured,
+    clientCreated: !!supabase,
+    steps: [],
+    lastError: null
+  };
+  function diagLog(msg){
+    diag.steps.push(new Date().toLocaleTimeString()+' — '+msg);
+    if(diag.steps.length>15) diag.steps.shift();
+    renderDiagnostics();
+  }
+  function renderDiagnostics(){
+    var box = document.getElementById('diagBox');
+    if(!box) return;
+    var lines = [];
+    lines.push('SDK Supabase dimuat: '+(diag.scriptLoaded?'YA':'TIDAK'));
+    lines.push('URL/Key disetkan: '+(diag.supabaseConfigured?'YA':'TIDAK'));
+    lines.push('Client dicipta: '+(diag.clientCreated?'YA':'TIDAK'));
+    lines.push('URL: '+SUPABASE_URL);
+    lines.push('Akaun dimuat: '+state.config.accounts.length);
+    lines.push('Transaksi dimuat: '+state.transactions.length);
+    lines.push('Status: '+document.getElementById('syncLabel').textContent);
+    if(diag.lastError) lines.push('Ralat terakhir: '+diag.lastError);
+    lines.push('--- log ---');
+    lines = lines.concat(diag.steps);
+    box.textContent = lines.join('\n');
+  }
+
   /* ============ boot (no login — single fixed data owner) ============ */
   async function initApp(){
+    diagLog('initApp mula');
     if(!supabase){
       setSyncLabel('Storan belum disetup');
+      diag.lastError = 'Client Supabase tidak wujud (window.supabase='+(!!window.supabase)+', configured='+supabaseConfigured+')';
+      diagLog('GAGAL: supabase client null');
       toast('Supabase belum disetup dengan betul — semak SUPABASE_URL/ANON_KEY.');
       renderAll();
       return;
@@ -705,18 +742,26 @@
     // failsafe: never let the UI stay stuck on "Memuatkan..." forever
     var failsafe = setTimeout(function(){
       setSyncLabel('Gagal sambung (cuba refresh)');
+      diagLog('TIMEOUT: >10s tiada respons');
       toast('Ambil masa lama sangat nak sambung ke storan. Cuba muat semula halaman.');
       state.ready = true;
       renderAll();
     }, 10000);
     try{
+      diagLog('memanggil loadConfig()');
       await loadConfig();
+      diagLog('loadConfig selesai, akaun='+state.config.accounts.length);
+      diagLog('memanggil loadTransactions()');
       await loadTransactions();
+      diagLog('loadTransactions selesai, tx='+state.transactions.length);
       subscribeRealtime();
+      diagLog('realtime disambung');
       setSyncLabel('Disegerak');
     } catch(err){
       setSyncLabel('Ralat sambungan');
-      toast('Gagal sambung ke storan: '+(err&&err.message||String(err)));
+      diag.lastError = (err&&err.message)||String(err);
+      diagLog('EXCEPTION: '+diag.lastError);
+      toast('Gagal sambung ke storan: '+diag.lastError);
     } finally {
       clearTimeout(failsafe);
       state.ready = true;
@@ -736,7 +781,12 @@
   async function loadConfig(){
     try{
       var res = await supabase.from('finance_config').select('*').eq('user_id', FIXED_USER_ID).maybeSingle();
-      if(res.error){ toast('Gagal muat data: '+res.error.message); return; }
+      if(res.error){
+        diag.lastError = res.error.message+(res.error.code?' (code: '+res.error.code+')':'');
+        diagLog('loadConfig res.error: '+diag.lastError);
+        toast('Gagal muat data: '+res.error.message);
+        return;
+      }
       if(res.data){
         state.config = {
           profile: Object.assign({}, DEFAULT_CONFIG.profile, res.data.profile||{}),
@@ -746,21 +796,31 @@
           savings: res.data.savings||[]
         };
       } else {
+        diagLog('loadConfig: tiada row utk user_id ini, cipta baru');
         state.config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
         await saveConfig();
       }
     } catch(err){
-      toast('Ralat muat data: '+(err&&err.message||String(err)));
+      diag.lastError = (err&&err.message)||String(err);
+      diagLog('loadConfig EXCEPTION: '+diag.lastError);
+      toast('Ralat muat data: '+diag.lastError);
     }
   }
 
   async function loadTransactions(){
     try{
       var res = await supabase.from('transactions').select('*').eq('user_id', FIXED_USER_ID).order('created_at', {ascending:false}).limit(500);
-      if(res.error){ toast('Gagal muat transaksi: '+res.error.message); return; }
+      if(res.error){
+        diag.lastError = res.error.message+(res.error.code?' (code: '+res.error.code+')':'');
+        diagLog('loadTransactions res.error: '+diag.lastError);
+        toast('Gagal muat transaksi: '+res.error.message);
+        return;
+      }
       state.transactions = (res.data||[]).map(mapTxRow);
     } catch(err){
-      toast('Ralat muat transaksi: '+(err&&err.message||String(err)));
+      diag.lastError = (err&&err.message)||String(err);
+      diagLog('loadTransactions EXCEPTION: '+diag.lastError);
+      toast('Ralat muat transaksi: '+diag.lastError);
     }
   }
 
@@ -1347,6 +1407,11 @@
     if(!p.salaryAmount){ toast('Sila tetapkan jumlah gaji dalam profil dahulu'); return; }
     modalTx({type:'income', amount:p.salaryAmount, accountId:p.defaultAccountId, category:'Gaji'});
   };
+  document.getElementById('btnRefreshDiag').onclick = function(){
+    diagLog('cuba sambung semula (manual)');
+    initApp();
+  };
+
 
   /* ============ pattern analysis ============ */
   function lastMonthKeys(n){
@@ -1968,54 +2033,4 @@
     var cat = computeCategoryBreakdown(90);
     var ins = computeInsights(series, cat);
 
-    document.getElementById('anRate').textContent = (ins.savingsRate>=0?'':'-')+Math.abs(ins.savingsRate).toFixed(0)+'%';
-    document.getElementById('anAvgExpense').textContent = fmtMoneyShort(ins.avgExpense);
-    document.getElementById('anTopCat').textContent = ins.topCategory ? esc(ins.topCategory.name) : '—';
-    var netEl = document.getElementById('anNet');
-    netEl.textContent = fmtMoneyShort(ins.netTotal);
-    netEl.parentElement.classList.toggle('debt', ins.netTotal<0);
-
-    // cashflow bars
-    var maxVal = 1;
-    series.forEach(function(m){ maxVal = Math.max(maxVal, m["in"], m.out); });
-    document.getElementById('cashflowBars').innerHTML = series.map(function(m){
-      var hIn = Math.round((m["in"]/maxVal)*100);
-      var hOut = Math.round((m.out/maxVal)*100);
-      var netClass = m.net>0?'pos':(m.net<0?'neg':'');
-      return '<div class="bar-col">'+
-        '<div class="net '+netClass+'">'+(m.net>=0?'+':'-')+fmtMoneyShort(Math.abs(m.net))+'</div>'+
-        '<div class="bar-pair">'+
-          '<div class="bar" style="height:'+Math.max(hIn,2)+'%;" title="Masuk"></div>'+
-          '<div class="bar out" style="height:'+Math.max(hOut,2)+'%;" title="Keluar"></div>'+
-        '</div>'+
-        '<div class="lbl">'+m.label+'</div>'+
-      '</div>';
-    }).join('');
-
-    // category breakdown
-    var catDiv = document.getElementById('catBreakdown');
-    if(!cat.items.length){
-      catDiv.innerHTML = '<div class="empty"><span class="big">📊</span>Belum cukup data perbelanjaan 90 hari ini.</div>';
-    } else {
-      catDiv.innerHTML = cat.items.slice(0,6).map(function(c){
-        var pct = cat.total>0 ? (c.amount/cat.total*100) : 0;
-        return '<div class="cat-row">'+
-          '<div class="cat-top"><span class="nm">'+esc(c.name)+'</span><span class="pct">'+fmtMoney(c.amount)+' · '+pct.toFixed(0)+'%</span></div>'+
-          '<div class="progress-track"><div class="progress-fill brick" style="width:'+pct.toFixed(1)+'%;"></div></div>'+
-        '</div>';
-      }).join('');
-    }
-
-    // insights
-    var cards = [];
-    if(ins.activeMonths===0){
-      cards.push('<div class="insight-card">Belum cukup transaksi untuk dianalisa. Rekod pendapatan &amp; perbelanjaan beberapa kali dahulu.</div>');
-    } else {
-      cards.push('<div class="insight-card'+(ins.savingsRate<0?' warn':'')+'">Kadar simpanan purata anda sejak '+ins.activeMonths+' bulan lalu ialah <b>'+ins.savingsRate.toFixed(0)+'%</b> daripada pendapatan'+(ins.savingsRate<0?' — perbelanjaan melebihi pendapatan.':'.')+'</div>');
-      if(ins.topCategory){
-        cards.push('<div class="insight-card">Perbelanjaan terbesar 90 hari ini: <b>'+esc(ins.topCategory.name)+'</b> ('+fmtMoney(ins.topCategory.amount)+').</div>');
-      }
-      if(ins.monthsToPayoff){
-        cards.push('<div class="insight-card">Dengan purata bayaran <b>'+fmtMoney(ins.avgDebtPay)+'</b>/bulan, hutang dijangka selesai dalam <b>~'+ins.monthsToPayoff+' bulan</b>.</div>');
-      } else if(totals().debtRem>0){
-        card
+    document.getElementById('anRate').textContent = (ins.savingsRate>=0?
