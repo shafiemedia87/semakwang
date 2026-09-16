@@ -701,13 +701,27 @@
       renderAll();
       return;
     }
-    setSyncLabel('Memuatkan…');
-    await loadConfig();
-    await loadTransactions();
-    subscribeRealtime();
-    state.ready = true;
-    setSyncLabel('Disegerak');
-    renderAll();
+    setSyncLabel('Memuatkan…', true);
+    // failsafe: never let the UI stay stuck on "Memuatkan..." forever
+    var failsafe = setTimeout(function(){
+      setSyncLabel('Gagal sambung (cuba refresh)');
+      toast('Ambil masa lama sangat nak sambung ke storan. Cuba muat semula halaman.');
+      state.ready = true;
+      renderAll();
+    }, 10000);
+    try{
+      await loadConfig();
+      await loadTransactions();
+      subscribeRealtime();
+      setSyncLabel('Disegerak');
+    } catch(err){
+      setSyncLabel('Ralat sambungan');
+      toast('Gagal sambung ke storan: '+(err&&err.message||String(err)));
+    } finally {
+      clearTimeout(failsafe);
+      state.ready = true;
+      renderAll();
+    }
   }
 
   /* ============ data load/save ============ */
@@ -720,26 +734,34 @@
   }
 
   async function loadConfig(){
-    var res = await supabase.from('finance_config').select('*').eq('user_id', FIXED_USER_ID).maybeSingle();
-    if(res.error){ toast('Gagal muat data: '+res.error.message); return; }
-    if(res.data){
-      state.config = {
-        profile: Object.assign({}, DEFAULT_CONFIG.profile, res.data.profile||{}),
-        accounts: res.data.accounts||[],
-        commitments: res.data.commitments||[],
-        debts: res.data.debts||[],
-        savings: res.data.savings||[]
-      };
-    } else {
-      state.config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
-      await saveConfig();
+    try{
+      var res = await supabase.from('finance_config').select('*').eq('user_id', FIXED_USER_ID).maybeSingle();
+      if(res.error){ toast('Gagal muat data: '+res.error.message); return; }
+      if(res.data){
+        state.config = {
+          profile: Object.assign({}, DEFAULT_CONFIG.profile, res.data.profile||{}),
+          accounts: res.data.accounts||[],
+          commitments: res.data.commitments||[],
+          debts: res.data.debts||[],
+          savings: res.data.savings||[]
+        };
+      } else {
+        state.config = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
+        await saveConfig();
+      }
+    } catch(err){
+      toast('Ralat muat data: '+(err&&err.message||String(err)));
     }
   }
 
   async function loadTransactions(){
-    var res = await supabase.from('transactions').select('*').eq('user_id', FIXED_USER_ID).order('created_at', {ascending:false}).limit(500);
-    if(res.error){ toast('Gagal muat transaksi: '+res.error.message); return; }
-    state.transactions = (res.data||[]).map(mapTxRow);
+    try{
+      var res = await supabase.from('transactions').select('*').eq('user_id', FIXED_USER_ID).order('created_at', {ascending:false}).limit(500);
+      if(res.error){ toast('Gagal muat transaksi: '+res.error.message); return; }
+      state.transactions = (res.data||[]).map(mapTxRow);
+    } catch(err){
+      toast('Ralat muat transaksi: '+(err&&err.message||String(err)));
+    }
   }
 
   function subscribeRealtime(){
@@ -1996,18 +2018,4 @@
       if(ins.monthsToPayoff){
         cards.push('<div class="insight-card">Dengan purata bayaran <b>'+fmtMoney(ins.avgDebtPay)+'</b>/bulan, hutang dijangka selesai dalam <b>~'+ins.monthsToPayoff+' bulan</b>.</div>');
       } else if(totals().debtRem>0){
-        cards.push('<div class="insight-card warn">Ada baki hutang tapi belum ada rekod bayaran hutang bulan-bulan ini — sukar anggar tempoh selesai.</div>');
-      }
-      if(ins.monthsToEf){
-        cards.push('<div class="insight-card">Ikut kadar simpanan semasa (<b>'+fmtMoney(ins.avgSavingNet)+'</b>/bulan), dana kecemasan dijangka cukup dalam <b>~'+ins.monthsToEf+' bulan</b>.</div>');
-      }
-    }
-    document.getElementById('insightsBlock').innerHTML = cards.join('');
-  }
-
-  function renderSettings(){
-    var p = state.config.profile;
-    var elA = document.getElementById('setSalaryAmount');
-    var elD = document.getElementById('setSalaryDay');
-    if(document.activeElement!==elA) elA.value = p.salaryAmount||'';
-    if(document.activeElement!==elD) elD.va
+        card
