@@ -420,37 +420,10 @@
   .check-title{ font-weight:600; font-size:0.88rem; }
   .check-sub{ font-size:0.72rem; color:var(--ink-soft); margin-top:1px; }
   .check-action{ flex:0 0 auto; }
-
-  /* ---------- auth gate ---------- */
-  .hidden{ display:none !important; }
-  .authgate{
-    position:fixed; inset:0; z-index:100;
-    background:var(--shell-bg);
-    display:flex; align-items:center; justify-content:center;
-    padding:20px;
-  }
-  .authcard{
-    background:var(--paper); border:1px solid var(--line); border-radius:8px;
-    width:100%; max-width:360px; padding:26px 24px;
-    box-shadow:0 20px 40px -12px rgba(0,0,0,0.5);
-  }
 </style>
 </head>
 <body>
-<div class="authgate" id="authGate">
-  <div class="authcard">
-    <div class="brand-name" style="font-size:1.6rem;margin-bottom:4px;">Buku Wang</div>
-    <p id="authGateMsg" style="font-size:0.82rem;color:var(--ink-soft);margin:0 0 16px;">Log masuk untuk akses data kewangan peribadi anda.</p>
-    <div id="authForm">
-      <label>Emel</label><input id="authEmail" type="email" placeholder="anda@email.com" autocomplete="email">
-      <label>Kata laluan</label><input id="authPassword" type="password" placeholder="••••••••" autocomplete="current-password">
-      <div class="btn-row"><button class="btn btn-primary btn-block" id="btnSignIn">Log Masuk</button></div>
-      <p style="text-align:center;font-size:0.78rem;margin-top:12px;">Belum ada akaun? <a href="#" id="btnShowSignUp" style="color:var(--pine-dark);">Daftar</a></p>
-      <div id="authError" style="color:var(--brick);font-size:0.78rem;margin-top:8px;display:none;"></div>
-    </div>
-  </div>
-</div>
-<div class="book hidden" id="book">
+<div class="book" id="book">
 
   <div class="cover">
     <div class="brand">
@@ -600,11 +573,6 @@
 
   <!-- TETAPAN -->
   <div class="page hidden" id="page-tetapan">
-    <div class="section-title">Akaun log masuk</div>
-    <div class="card">
-      <p style="margin:0 0 8px;font-size:0.8rem;color:var(--ink-soft);" id="loggedInAs"></p>
-      <button class="btn btn-block" id="btnLogout">Log keluar</button>
-    </div>
     <div class="section-title">Profil pendapatan tetap</div>
     <div class="card">
       <label>Jumlah gaji bulanan (RM)</label>
@@ -717,8 +685,7 @@
     activeTab:'dashboard'
   };
 
-  var currentUserId = null;
-  var currentUserEmail = '';
+  var FIXED_USER_ID = '00000000-0000-0000-0000-000000000001';
   var realtimeChannel = null;
 
   function setSyncLabel(text, busy){
@@ -726,34 +693,14 @@
     document.getElementById('syncDot').classList.toggle('busy', !!busy);
   }
 
-  /* ============ auth ============ */
-  async function initAuth(){
+  /* ============ boot (no login — single fixed data owner) ============ */
+  async function initApp(){
     if(!supabase){
-      document.getElementById('authGateMsg').textContent = 'Supabase belum disetup. Isi SUPABASE_URL dan SUPABASE_ANON_KEY dalam index.html, terbitkan semula, dan muat semula halaman ini.';
-      document.getElementById('authForm').classList.add('hidden');
-      setSyncLabel('Belum disetup');
+      setSyncLabel('Storan belum disetup');
+      toast('Supabase belum disetup dengan betul — semak SUPABASE_URL/ANON_KEY.');
+      renderAll();
       return;
     }
-    var res = await supabase.auth.getSession();
-    if(res.data && res.data.session){ await onAuthed(res.data.session); }
-    else { showAuthGate(); }
-    supabase.auth.onAuthStateChange(function(_event, session){
-      if(session){ onAuthed(session); } else { showAuthGate(); }
-    });
-  }
-
-  function showAuthGate(){
-    document.getElementById('book').classList.add('hidden');
-    document.getElementById('authGate').classList.remove('hidden');
-  }
-
-  async function onAuthed(session){
-    currentUserId = session.user.id;
-    currentUserEmail = session.user.email || '';
-    document.getElementById('authGate').classList.add('hidden');
-    document.getElementById('book').classList.remove('hidden');
-    var loggedEl = document.getElementById('loggedInAs');
-    if(loggedEl) loggedEl.textContent = 'Log masuk sebagai ' + currentUserEmail;
     setSyncLabel('Memuatkan…');
     await loadConfig();
     await loadTransactions();
@@ -762,52 +709,6 @@
     setSyncLabel('Disegerak');
     renderAll();
   }
-
-  var authMode = 'signin';
-  document.getElementById('btnShowSignUp').onclick = function(e){
-    e.preventDefault();
-    authMode = authMode==='signin' ? 'signup' : 'signin';
-    document.getElementById('btnSignIn').textContent = authMode==='signin' ? 'Log Masuk' : 'Daftar Akaun';
-    document.getElementById('btnShowSignUp').textContent = authMode==='signin' ? 'Daftar' : 'Log masuk';
-    document.getElementById('authGateMsg').textContent = authMode==='signin' ? 'Log masuk untuk akses data kewangan peribadi anda.' : 'Cipta akaun baru dengan emel & kata laluan.';
-    document.getElementById('authError').style.display='none';
-  };
-  document.getElementById('btnSignIn').onclick = async function(){
-    var errEl = document.getElementById('authError');
-    errEl.style.color = 'var(--brick)'; errEl.style.display='none';
-    if(!supabase){
-      errEl.textContent = 'Sistem storan (Supabase) belum sedia — cuba muat semula halaman (refresh) atau semak sambungan internet.';
-      errEl.style.display='block';
-      return;
-    }
-    var email = document.getElementById('authEmail').value.trim();
-    var password = document.getElementById('authPassword').value;
-    if(!email || !password){ errEl.textContent='Sila isi emel dan kata laluan.'; errEl.style.display='block'; return; }
-    var btn = document.getElementById('btnSignIn');
-    var originalLabel = btn.textContent;
-    btn.textContent = 'Sedang proses…'; btn.disabled = true;
-    try{
-      var res = authMode==='signin'
-        ? await supabase.auth.signInWithPassword({email:email, password:password})
-        : await supabase.auth.signUp({email:email, password:password});
-      if(res.error){ errEl.textContent = res.error.message; errEl.style.display='block'; return; }
-      if(authMode==='signup' && res.data && !res.data.session){
-        errEl.style.color = 'var(--pine-dark)';
-        errEl.textContent = 'Akaun dicipta. Semak emel untuk sahkan (jika Supabase perlukan), atau log masuk terus.';
-        errEl.style.display='block';
-      }
-    } catch(err){
-      errEl.textContent = 'Ralat: '+(err&&err.message||String(err));
-      errEl.style.display='block';
-    } finally {
-      btn.textContent = originalLabel; btn.disabled = false;
-    }
-  };
-  document.getElementById('btnLogout').onclick = async function(){
-    if(!supabase) return;
-    try{ await supabase.auth.signOut(); }
-    catch(err){ toast('Ralat log keluar: '+(err&&err.message||err)); }
-  };
 
   /* ============ data load/save ============ */
   function mapTxRow(row){
@@ -819,7 +720,7 @@
   }
 
   async function loadConfig(){
-    var res = await supabase.from('finance_config').select('*').eq('user_id', currentUserId).maybeSingle();
+    var res = await supabase.from('finance_config').select('*').eq('user_id', FIXED_USER_ID).maybeSingle();
     if(res.error){ toast('Gagal muat data: '+res.error.message); return; }
     if(res.data){
       state.config = {
@@ -836,7 +737,7 @@
   }
 
   async function loadTransactions(){
-    var res = await supabase.from('transactions').select('*').eq('user_id', currentUserId).order('created_at', {ascending:false}).limit(500);
+    var res = await supabase.from('transactions').select('*').eq('user_id', FIXED_USER_ID).order('created_at', {ascending:false}).limit(500);
     if(res.error){ toast('Gagal muat transaksi: '+res.error.message); return; }
     state.transactions = (res.data||[]).map(mapTxRow);
   }
@@ -844,8 +745,8 @@
   function subscribeRealtime(){
     if(!supabase) return;
     if(realtimeChannel){ supabase.removeChannel(realtimeChannel); }
-    realtimeChannel = supabase.channel('finance-'+currentUserId)
-      .on('postgres_changes', {event:'*', schema:'public', table:'finance_config', filter:'user_id=eq.'+currentUserId}, function(payload){
+    realtimeChannel = supabase.channel('finance-'+FIXED_USER_ID)
+      .on('postgres_changes', {event:'*', schema:'public', table:'finance_config', filter:'user_id=eq.'+FIXED_USER_ID}, function(payload){
         if(payload.new){
           state.config = {
             profile: Object.assign({}, DEFAULT_CONFIG.profile, payload.new.profile||{}),
@@ -855,16 +756,16 @@
           renderAll();
         }
       })
-      .on('postgres_changes', {event:'*', schema:'public', table:'transactions', filter:'user_id=eq.'+currentUserId}, function(){
+      .on('postgres_changes', {event:'*', schema:'public', table:'transactions', filter:'user_id=eq.'+FIXED_USER_ID}, function(){
         loadTransactions().then(renderAll);
       })
       .subscribe();
   }
 
   async function saveConfig(){
-    if(!supabase || !currentUserId){ renderAll(); return; }
+    if(!supabase || !FIXED_USER_ID){ renderAll(); return; }
     setSyncLabel('Menyegerakkan…', true);
-    var payload = Object.assign({user_id: currentUserId, updated_at: new Date().toISOString()}, state.config);
+    var payload = Object.assign({user_id: FIXED_USER_ID, updated_at: new Date().toISOString()}, state.config);
     var res = await supabase.from('finance_config').upsert(payload);
     if(res.error){ toast('Gagal simpan: '+res.error.message); setSyncLabel('Ralat simpan'); return; }
     setSyncLabel('Disegerak');
@@ -939,9 +840,9 @@
   async function addTransaction(tx){
     applyEffect(tx, 1);
     await saveConfig();
-    if(supabase && currentUserId){
+    if(supabase && FIXED_USER_ID){
       var row = {
-        user_id: currentUserId, date: tx.date, type: tx.type, amount: tx.amount,
+        user_id: FIXED_USER_ID, date: tx.date, type: tx.type, amount: tx.amount,
         account_id: tx.accountId||null, to_account_id: tx.toAccountId||null, ref_id: tx.refId||null,
         category: tx.category||null, note: tx.note||null
       };
@@ -961,7 +862,7 @@
     if(!tx) return;
     applyEffect(tx, -1);
     await saveConfig();
-    if(supabase && currentUserId){
+    if(supabase && FIXED_USER_ID){
       var res = await supabase.from('transactions').delete().eq('id', id);
       if(res.error){ toast('Gagal padam: '+res.error.message); }
     }
@@ -976,7 +877,7 @@
     applyEffect(old, -1);   // undo old effect on accounts/debts/savings
     applyEffect(newTx, 1);  // apply new effect
     await saveConfig();
-    if(supabase && currentUserId){
+    if(supabase && FIXED_USER_ID){
       var row = {
         date: newTx.date, type: newTx.type, amount: newTx.amount,
         account_id: newTx.accountId||null, to_account_id: newTx.toAccountId||null, ref_id: newTx.refId||null,
@@ -2013,4 +1914,100 @@
     document.getElementById('txCount').textContent = state.transactions.length+' rekod';
     var list = document.getElementById('txList');
     if(!state.transactions.length){
-      list.innerHTML = '<div class="empty"><span class="big">🧾</span>Belum ada transaksi.</div
+      list.innerHTML = '<div class="empty"><span class="big">🧾</span>Belum ada transaksi.</div>';
+      return;
+    }
+    list.innerHTML = state.transactions.map(function(tx){
+      return '<div class="ledger-row" data-tx="'+tx.id+'" style="cursor:pointer;">'+
+        '<div class="ledger-main">'+
+          '<div class="ledger-title">'+txTypeLabel(tx)+(tx.note?' — '+esc(tx.note):'')+'</div>'+
+          '<div class="ledger-sub">'+esc(txSubtitle(tx))+'</div>'+
+        '</div>'+
+        '<div style="text-align:right;">'+
+          '<div class="ledger-amt '+(txIsIn(tx)?'amt-in':'amt-out')+'">'+(txIsIn(tx)?'+':'-')+fmtMoney(tx.amount)+'</div>'+
+          '<span class="btn-ghost" style="padding:2px 4px;font-size:0.7rem;">Edit ›</span>'+
+        '</div>'+
+      '</div>';
+    }).join('');
+    list.querySelectorAll('[data-tx]').forEach(function(row){
+      row.onclick = function(){
+        var tx = state.transactions.find(function(t){return t.id===row.dataset.tx;});
+        if(!tx) return;
+        modalTx({
+          type: tx.type, amount: tx.amount, date: tx.date, category: tx.category, note: tx.note,
+          accountId: tx.accountId, toAccountId: tx.toAccountId, refId: tx.refId
+        }, tx.id);
+      };
+    });
+  }
+
+  function renderAnalisa(){
+    var series = computeMonthlySeries(6);
+    var cat = computeCategoryBreakdown(90);
+    var ins = computeInsights(series, cat);
+
+    document.getElementById('anRate').textContent = (ins.savingsRate>=0?'':'-')+Math.abs(ins.savingsRate).toFixed(0)+'%';
+    document.getElementById('anAvgExpense').textContent = fmtMoneyShort(ins.avgExpense);
+    document.getElementById('anTopCat').textContent = ins.topCategory ? esc(ins.topCategory.name) : '—';
+    var netEl = document.getElementById('anNet');
+    netEl.textContent = fmtMoneyShort(ins.netTotal);
+    netEl.parentElement.classList.toggle('debt', ins.netTotal<0);
+
+    // cashflow bars
+    var maxVal = 1;
+    series.forEach(function(m){ maxVal = Math.max(maxVal, m["in"], m.out); });
+    document.getElementById('cashflowBars').innerHTML = series.map(function(m){
+      var hIn = Math.round((m["in"]/maxVal)*100);
+      var hOut = Math.round((m.out/maxVal)*100);
+      var netClass = m.net>0?'pos':(m.net<0?'neg':'');
+      return '<div class="bar-col">'+
+        '<div class="net '+netClass+'">'+(m.net>=0?'+':'-')+fmtMoneyShort(Math.abs(m.net))+'</div>'+
+        '<div class="bar-pair">'+
+          '<div class="bar" style="height:'+Math.max(hIn,2)+'%;" title="Masuk"></div>'+
+          '<div class="bar out" style="height:'+Math.max(hOut,2)+'%;" title="Keluar"></div>'+
+        '</div>'+
+        '<div class="lbl">'+m.label+'</div>'+
+      '</div>';
+    }).join('');
+
+    // category breakdown
+    var catDiv = document.getElementById('catBreakdown');
+    if(!cat.items.length){
+      catDiv.innerHTML = '<div class="empty"><span class="big">📊</span>Belum cukup data perbelanjaan 90 hari ini.</div>';
+    } else {
+      catDiv.innerHTML = cat.items.slice(0,6).map(function(c){
+        var pct = cat.total>0 ? (c.amount/cat.total*100) : 0;
+        return '<div class="cat-row">'+
+          '<div class="cat-top"><span class="nm">'+esc(c.name)+'</span><span class="pct">'+fmtMoney(c.amount)+' · '+pct.toFixed(0)+'%</span></div>'+
+          '<div class="progress-track"><div class="progress-fill brick" style="width:'+pct.toFixed(1)+'%;"></div></div>'+
+        '</div>';
+      }).join('');
+    }
+
+    // insights
+    var cards = [];
+    if(ins.activeMonths===0){
+      cards.push('<div class="insight-card">Belum cukup transaksi untuk dianalisa. Rekod pendapatan &amp; perbelanjaan beberapa kali dahulu.</div>');
+    } else {
+      cards.push('<div class="insight-card'+(ins.savingsRate<0?' warn':'')+'">Kadar simpanan purata anda sejak '+ins.activeMonths+' bulan lalu ialah <b>'+ins.savingsRate.toFixed(0)+'%</b> daripada pendapatan'+(ins.savingsRate<0?' — perbelanjaan melebihi pendapatan.':'.')+'</div>');
+      if(ins.topCategory){
+        cards.push('<div class="insight-card">Perbelanjaan terbesar 90 hari ini: <b>'+esc(ins.topCategory.name)+'</b> ('+fmtMoney(ins.topCategory.amount)+').</div>');
+      }
+      if(ins.monthsToPayoff){
+        cards.push('<div class="insight-card">Dengan purata bayaran <b>'+fmtMoney(ins.avgDebtPay)+'</b>/bulan, hutang dijangka selesai dalam <b>~'+ins.monthsToPayoff+' bulan</b>.</div>');
+      } else if(totals().debtRem>0){
+        cards.push('<div class="insight-card warn">Ada baki hutang tapi belum ada rekod bayaran hutang bulan-bulan ini — sukar anggar tempoh selesai.</div>');
+      }
+      if(ins.monthsToEf){
+        cards.push('<div class="insight-card">Ikut kadar simpanan semasa (<b>'+fmtMoney(ins.avgSavingNet)+'</b>/bulan), dana kecemasan dijangka cukup dalam <b>~'+ins.monthsToEf+' bulan</b>.</div>');
+      }
+    }
+    document.getElementById('insightsBlock').innerHTML = cards.join('');
+  }
+
+  function renderSettings(){
+    var p = state.config.profile;
+    var elA = document.getElementById('setSalaryAmount');
+    var elD = document.getElementById('setSalaryDay');
+    if(document.activeElement!==elA) elA.value = p.salaryAmount||'';
+    if(document.activeElement!==elD) elD.va
