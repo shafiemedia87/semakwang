@@ -31,7 +31,28 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="window.__scriptLoadError='supabase-js gagal dimuat';"></script>
+<script>
+  // Cuba beberapa CDN untuk SDK Supabase — sesetengah rangkaian sekat satu CDN
+  // je (contoh jsdelivr) tapi benarkan yang lain (unpkg / esm.sh mirror).
+  window.__supabaseLoadPromise = new Promise(function(resolve){
+    var urls = [
+      'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
+      'https://unpkg.com/@supabase/supabase-js@2',
+      'https://cdnjs.cloudflare.com/ajax/libs/supabase-js/2.45.4/umd/supabase.min.js'
+    ];
+    function tryLoad(i){
+      if(i>=urls.length){ window.__scriptLoadError='Semua CDN gagal dimuat'; resolve(false); return; }
+      var s = document.createElement('script');
+      s.src = urls[i];
+      var done = false;
+      var timer = setTimeout(function(){ if(!done){ done=true; tryLoad(i+1); } }, 5000);
+      s.onload = function(){ if(done) return; done=true; clearTimeout(timer); resolve(true); };
+      s.onerror = function(){ if(done) return; done=true; clearTimeout(timer); tryLoad(i+1); };
+      document.head.appendChild(s);
+    }
+    tryLoad(0);
+  });
+</script>
 <style>
   :root{
     --paper:#F2ECDA;
@@ -697,9 +718,7 @@
 
   var supabase = null;
   var supabaseConfigured = SUPABASE_URL.indexOf('YOUR-PROJECT-REF') === -1 && SUPABASE_ANON_KEY.indexOf('YOUR-ANON-PUBLIC-KEY') === -1;
-  if(window.supabase && supabaseConfigured){
-    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-  }
+  // Client dicipta lepas CDN loader (di <head>) selesai — lihat boot sequence di bawah.
 
   var DEFAULT_CONFIG = {
     profile:{ salaryAmount:0, salaryDay:28, defaultAccountId:null },
@@ -2010,19 +2029,4 @@
       }
       return '<div class="card">'+
         '<div class="ledger-row" style="border:none;padding:0 0 4px;">'+
-          '<div class="ledger-main"><div class="ledger-title">'+esc(s.name)+'</div><div class="ledger-sub">'+kindLabel+'</div>'+needInfo+'</div>'+
-          '<button class="btn-ghost" data-edit-saving="'+s.id+'" style="padding:2px 4px;font-size:0.72rem;">Edit</button>'+
-        '</div>'+
-        '<div class="progress-track"><div class="progress-fill gold" style="width:'+pct.toFixed(1)+'%;"></div></div>'+
-        '<div class="progress-meta"><span>'+fmtMoney(s.current)+' / '+fmtMoney(target)+'</span><span>'+pct.toFixed(0)+'%</span></div>'+
-      '</div>';
-    }).join('');
-    list.querySelectorAll('[data-edit-saving]').forEach(function(b){
-      b.onclick = function(){ modalSaving(state.config.savings.find(function(s){return s.id===b.dataset.editSaving;})); };
-    });
-  }
-
-  function renderTransactions(){
-    document.getElementById('txCount').textContent = state.transactions.length+' rekod';
-    var list = document.getElementById('txList');
-    if(
+          '<div class="ledger-main"><div class="ledger-title">'+esc(s.name)+'</div><div class="ledger-sub">'+k
