@@ -1119,6 +1119,8 @@
       '</div>'+
       '<div id="autoTargetHint" class="hint" style="display:'+(kind==='custom'?'none':'block')+';"></div>'+
       '<label>Jumlah semasa (RM)</label><input id="fCurrent" type="number" step="0.01" value="'+(existing?existing.current:'0')+'" placeholder="0.00">'+
+      '<label>Sasaran tarikh nak cukup (pilihan)</label><input id="fTargetDate" type="date" value="'+(existing&&existing.targetDate||'')+'">'+
+      '<div id="monthlyNeedHint" class="hint"></div>'+
       '<div class="btn-row">'+
         (isEdit?'<button class="btn btn-danger" id="mDelete">Padam</button>':'')+
         '<button class="btn btn-primary btn-block" id="mSave">Simpan</button>'+
@@ -1135,6 +1137,22 @@
         var months = selectedKind==='emergency3'?3:6;
         hint.textContent = 'Sasaran auto-kira: '+months+' × komitmen bulanan ('+fmtMoney(t.commitMonth)+') = '+fmtMoney(t.commitMonth*months);
       }
+      updateMonthlyNeed();
+    }
+    function currentTargetAmount(){
+      if(selectedKind==='custom') return parseFloat(document.getElementById('fTarget').value)||0;
+      var t = totals(); var months = selectedKind==='emergency3'?3:6;
+      return t.commitMonth*months;
+    }
+    function updateMonthlyNeed(){
+      var mh = document.getElementById('monthlyNeedHint');
+      var dateVal = document.getElementById('fTargetDate').value;
+      var current = parseFloat(document.getElementById('fCurrent').value)||0;
+      var target = currentTargetAmount();
+      if(!dateVal || target<=current){ mh.textContent=''; return; }
+      var months = monthsBetween(todayStr(), dateVal);
+      var needed = (target-current)/months;
+      mh.textContent = 'Perlu simpan ~'+fmtMoney(needed)+'/bulan untuk cukup menjelang '+fmtDateHuman(dateVal)+'.';
     }
     updateHint();
     document.getElementById('fKind').addEventListener('click', function(e){
@@ -1143,16 +1161,21 @@
       document.querySelectorAll('#fKind button').forEach(function(x){x.classList.toggle('active', x===b);});
       updateHint();
     });
+    document.getElementById('fTargetDate').addEventListener('input', updateMonthlyNeed);
+    document.getElementById('fCurrent').addEventListener('input', updateMonthlyNeed);
+    var fTargetEl = document.getElementById('fTarget');
+    if(fTargetEl) fTargetEl.addEventListener('input', updateMonthlyNeed);
     document.getElementById('mClose').onclick = closeModal;
     document.getElementById('mSave').onclick = async function(){
       var name = document.getElementById('fName').value.trim();
       if(!name){ name = 'Sasaran '+(state.config.savings.length+1); }
       var current = parseFloat(document.getElementById('fCurrent').value)||0;
       var target = selectedKind==='custom' ? (parseFloat(document.getElementById('fTarget').value)||0) : 0;
+      var targetDate = document.getElementById('fTargetDate').value;
       if(isEdit){
-        existing.name=name; existing.kind=selectedKind; existing.target=target; existing.current=current;
+        existing.name=name; existing.kind=selectedKind; existing.target=target; existing.current=current; existing.targetDate=targetDate;
       } else {
-        state.config.savings.push({id:uid(), name:name, kind:selectedKind, target:target, current:current});
+        state.config.savings.push({id:uid(), name:name, kind:selectedKind, target:target, current:current, targetDate:targetDate});
       }
       await saveConfig(); closeModal(); renderAll(); toast('Sasaran disimpan');
     };
@@ -1404,10 +1427,17 @@
       efDiv.innerHTML = efGoals.map(function(s){
         var target = savingTarget(s);
         var pct = target>0 ? clamp((s.current/target)*100,0,100) : 0;
+        var needLine = '';
+        if(s.targetDate && target>s.current){
+          var months = monthsBetween(todayStr(), s.targetDate);
+          var needed = (target-s.current)/months;
+          needLine = '<div class="progress-meta" style="margin-top:2px;"><span>Sasaran '+fmtDateHuman(s.targetDate)+'</span><span>~'+fmtMoney(needed)+'/bulan</span></div>';
+        }
         return '<div class="card">'+
           '<div class="ledger-row" style="border:none;padding:0 0 6px;"><div class="ledger-title">'+esc(s.name)+'</div><div class="ledger-amt">'+fmtMoney(s.current)+' / '+fmtMoney(target)+'</div></div>'+
           '<div class="progress-track"><div class="progress-fill" style="width:'+pct.toFixed(1)+'%;"></div></div>'+
           '<div class="progress-meta"><span>'+pct.toFixed(0)+'% tercapai</span><span>'+(s.kind==='emergency3'?'Sasaran 3 bulan':'Sasaran 6 bulan')+'</span></div>'+
+          needLine+
         '</div>';
       }).join('');
     }
@@ -1550,9 +1580,17 @@
       var target = savingTarget(s);
       var pct = target>0 ? clamp((s.current/target)*100,0,100) : (s.current>0?100:0);
       var kindLabel = s.kind==='emergency3'?'Dana kecemasan · 3 bulan':(s.kind==='emergency6'?'Dana kecemasan · 6 bulan':'Sasaran sendiri');
+      var needInfo = '';
+      if(s.targetDate && target>s.current){
+        var months = monthsBetween(todayStr(), s.targetDate);
+        var needed = (target-s.current)/months;
+        needInfo = '<div class="ledger-sub">Sasaran '+fmtDateHuman(s.targetDate)+' — perlu ~'+fmtMoney(needed)+'/bulan</div>';
+      } else if(s.targetDate && target<=s.current){
+        needInfo = '<div class="ledger-sub">Sasaran dah tercapai 🎉</div>';
+      }
       return '<div class="card">'+
         '<div class="ledger-row" style="border:none;padding:0 0 4px;">'+
-          '<div class="ledger-main"><div class="ledger-title">'+esc(s.name)+'</div><div class="ledger-sub">'+kindLabel+'</div></div>'+
+          '<div class="ledger-main"><div class="ledger-title">'+esc(s.name)+'</div><div class="ledger-sub">'+kindLabel+'</div>'+needInfo+'</div>'+
           '<button class="btn-ghost" data-edit-saving="'+s.id+'" style="padding:2px 4px;font-size:0.72rem;">Edit</button>'+
         '</div>'+
         '<div class="progress-track"><div class="progress-fill gold" style="width:'+pct.toFixed(1)+'%;"></div></div>'+
