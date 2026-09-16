@@ -1700,6 +1700,23 @@
       : 'Bajet bulanan ('+fmtMoney(s.budget)+') = jumlah bayaran minimum semua hutang (belum ada corak bayaran ekstra direkod).';
     var html = '<div class="hint" style="margin-bottom:10px;">'+budgetNote+(s.hasRates?'':' Isi kadar faedah pada tiap hutang untuk anggaran faedah yang lebih tepat.')+'</div>';
 
+    // ---- how-to-execute explanation, using the recommended strategy's real numbers ----
+    var recOrder = s.recommend==='snowball' ? s.snowballOrder : s.avalancheOrder;
+    var recResult = s.recommend==='snowball' ? s.snowball : s.avalanche;
+    var extra = Math.max(0, s.budget - s.totalMin);
+    var first = recOrder[0], second = recOrder[1];
+    var firstPo = recResult.payoffOrder.find(function(p){return p.id===first.id;});
+    html += '<div class="insight-card" style="margin-bottom:12px;">'+
+      '<b style="display:block;margin-bottom:6px;">Macam mana nak bayar sebenarnya (bukan sikit-sikit rata):</b>'+
+      '<ol style="margin:0 0 8px 18px;padding:0;">'+
+        '<li style="margin-bottom:4px;">Bayar <b>bayaran minimum sahaja</b> untuk semua hutang <u>selain</u> nombor 1 dalam senarai — supaya tiada penalti lewat bayar.</li>'+
+        '<li style="margin-bottom:4px;">Baki lebihan bajet (~<b>'+fmtMoney(extra)+'</b>) letak <b>sekali gus</b> pada <b>'+esc(first.name)+'</b> setiap bulan, sampai ia habis (~bulan '+(firstPo?firstPo.month:'?')+').</li>'+
+        (second?'<li style="margin-bottom:4px;">Bila <b>'+esc(first.name)+'</b> habis, jumlah yang dulu dibayar untuknya (minimum + extra) <b>disambung terus</b> kepada <b>'+esc(second.name)+'</b> — jumlah bayaran makin membesar, itu sebab dipanggil "snowball/avalanche".</li>':'')+
+        '<li>Ulang proses ini sehingga semua hutang selesai.</li>'+
+      '</ol>'+
+      '<div style="font-size:0.75rem;color:var(--ink-soft);">Susunan "1, 2, 3…" di bawah ialah <u>turutan tumpuan</u> — bukan bayar semua sekali sama banyak.</div>'+
+    '</div>';
+
     html += '<div class="strategy-card'+(s.recommend==='snowball'?' recommended':'')+'">'+
       '<div class="strategy-head"><span class="strategy-name">❄️ Snowball</span>'+(s.recommend==='snowball'?'<span class="strategy-badge">Dicadangkan</span>':'')+'</div>'+
       '<div class="strategy-stats">'+
