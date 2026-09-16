@@ -344,7 +344,7 @@
   .toast{
     position:fixed; bottom:78px; left:50%; transform:translateX(-50%);
     background:var(--pine-dark); color:#F4EFDD; padding:9px 16px; border-radius:20px;
-    font-size:0.8rem; z-index:80; opacity:0; pointer-events:none; transition:opacity .2s, transform .2s;
+    font-size:0.8rem; z-index:200; opacity:0; pointer-events:none; transition:opacity .2s, transform .2s;
   }
   .toast.show{ opacity:1; transform:translateX(-50%) translateY(-4px); }
 
@@ -773,25 +773,40 @@
     document.getElementById('authError').style.display='none';
   };
   document.getElementById('btnSignIn').onclick = async function(){
-    if(!supabase) return;
-    var email = document.getElementById('authEmail').value.trim();
-    var password = document.getElementById('authPassword').value;
     var errEl = document.getElementById('authError');
     errEl.style.color = 'var(--brick)'; errEl.style.display='none';
-    if(!email || !password){ errEl.textContent='Sila isi emel dan kata laluan.'; errEl.style.display='block'; return; }
-    var res = authMode==='signin'
-      ? await supabase.auth.signInWithPassword({email:email, password:password})
-      : await supabase.auth.signUp({email:email, password:password});
-    if(res.error){ errEl.textContent = res.error.message; errEl.style.display='block'; return; }
-    if(authMode==='signup' && res.data && !res.data.session){
-      errEl.style.color = 'var(--pine-dark)';
-      errEl.textContent = 'Akaun dicipta. Semak emel untuk sahkan (jika Supabase perlukan), atau log masuk terus.';
+    if(!supabase){
+      errEl.textContent = 'Sistem storan (Supabase) belum sedia — cuba muat semula halaman (refresh) atau semak sambungan internet.';
       errEl.style.display='block';
+      return;
+    }
+    var email = document.getElementById('authEmail').value.trim();
+    var password = document.getElementById('authPassword').value;
+    if(!email || !password){ errEl.textContent='Sila isi emel dan kata laluan.'; errEl.style.display='block'; return; }
+    var btn = document.getElementById('btnSignIn');
+    var originalLabel = btn.textContent;
+    btn.textContent = 'Sedang proses…'; btn.disabled = true;
+    try{
+      var res = authMode==='signin'
+        ? await supabase.auth.signInWithPassword({email:email, password:password})
+        : await supabase.auth.signUp({email:email, password:password});
+      if(res.error){ errEl.textContent = res.error.message; errEl.style.display='block'; return; }
+      if(authMode==='signup' && res.data && !res.data.session){
+        errEl.style.color = 'var(--pine-dark)';
+        errEl.textContent = 'Akaun dicipta. Semak emel untuk sahkan (jika Supabase perlukan), atau log masuk terus.';
+        errEl.style.display='block';
+      }
+    } catch(err){
+      errEl.textContent = 'Ralat: '+(err&&err.message||String(err));
+      errEl.style.display='block';
+    } finally {
+      btn.textContent = originalLabel; btn.disabled = false;
     }
   };
   document.getElementById('btnLogout').onclick = async function(){
     if(!supabase) return;
-    await supabase.auth.signOut();
+    try{ await supabase.auth.signOut(); }
+    catch(err){ toast('Ralat log keluar: '+(err&&err.message||err)); }
   };
 
   /* ============ data load/save ============ */
@@ -1998,16 +2013,4 @@
     document.getElementById('txCount').textContent = state.transactions.length+' rekod';
     var list = document.getElementById('txList');
     if(!state.transactions.length){
-      list.innerHTML = '<div class="empty"><span class="big">🧾</span>Belum ada transaksi.</div>';
-      return;
-    }
-    list.innerHTML = state.transactions.map(function(tx){
-      return '<div class="ledger-row" data-tx="'+tx.id+'" style="cursor:pointer;">'+
-        '<div class="ledger-main">'+
-          '<div class="ledger-title">'+txTypeLabel(tx)+(tx.note?' — '+esc(tx.note):'')+'</div>'+
-          '<div class="ledger-sub">'+esc(txSubtitle(tx))+'</div>'+
-        '</div>'+
-        '<div style="text-align:right;">'+
-          '<div class="ledger-amt '+(txIsIn(tx)?'amt-in':'amt-out')+'">'+(txIsIn(tx)?'+':'-')+fmtMoney(tx.amount)+'</div>'+
-          '<span class="btn-ghost" style="padding:2px 4px;font-size:0.7rem;">Edit ›</span>'+
- 
+      list.innerHTML = '<div class="empty"><span class="big">🧾</span>Belum ada transaksi.</div
