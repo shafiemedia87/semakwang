@@ -4,10 +4,34 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, viewport-fit=cover">
 <title>Buku Wang</title>
+<script>
+  // Watchdog: berjalan SERTA-MERTA, tak bergantung pada apa-apa skrip luar.
+  // Kalau app utama tak sempat "check-in" dalam masa tertentu (contoh skrip CDN
+  // tersekat/gagal dimuat pada rangkaian pengguna), papar mesej jelas + butang refresh
+  // supaya skrin tak kekal kosong/senyap tanpa penjelasan.
+  window.__appBooted = false;
+  window.__scriptLoadError = null;
+  setTimeout(function(){
+    if(window.__appBooted) return;
+    var msg = window.__scriptLoadError
+      ? 'Gagal muat sistem storan (Supabase SDK tak dapat dimuat dari rangkaian ini).'
+      : 'App ambil masa lama sangat untuk mula. Kemungkinan rangkaian internet tersekat skrip luar.';
+    document.body.insertAdjacentHTML('afterbegin',
+      '<div style="position:fixed;inset:0;z-index:99999;background:#1a2620;color:#F4EFDD;'+
+      'font-family:sans-serif;display:flex;flex-direction:column;align-items:center;'+
+      'justify-content:center;padding:24px;text-align:center;gap:14px;">'+
+      '<div style="font-size:2rem;">⚠️</div>'+
+      '<div style="font-size:1rem;max-width:320px;">'+msg+'</div>'+
+      '<button onclick="location.reload()" style="padding:10px 20px;border-radius:6px;'+
+      'border:none;background:#F4EFDD;color:#1a2620;font-weight:700;font-size:0.9rem;">Muat semula</button>'+
+      '</div>'
+    );
+  }, 8000);
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" onerror="window.__scriptLoadError='supabase-js gagal dimuat';"></script>
 <style>
   :root{
     --paper:#F2ECDA;
@@ -613,6 +637,7 @@
 <script>
 (function(){
   "use strict";
+  window.__appBooted = true; // main script berjaya mula jalan — watchdog tak perlu tunjuk amaran
 
   /* ============ helpers ============ */
   function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,8); }
@@ -2000,37 +2025,4 @@
   function renderTransactions(){
     document.getElementById('txCount').textContent = state.transactions.length+' rekod';
     var list = document.getElementById('txList');
-    if(!state.transactions.length){
-      list.innerHTML = '<div class="empty"><span class="big">🧾</span>Belum ada transaksi.</div>';
-      return;
-    }
-    list.innerHTML = state.transactions.map(function(tx){
-      return '<div class="ledger-row" data-tx="'+tx.id+'" style="cursor:pointer;">'+
-        '<div class="ledger-main">'+
-          '<div class="ledger-title">'+txTypeLabel(tx)+(tx.note?' — '+esc(tx.note):'')+'</div>'+
-          '<div class="ledger-sub">'+esc(txSubtitle(tx))+'</div>'+
-        '</div>'+
-        '<div style="text-align:right;">'+
-          '<div class="ledger-amt '+(txIsIn(tx)?'amt-in':'amt-out')+'">'+(txIsIn(tx)?'+':'-')+fmtMoney(tx.amount)+'</div>'+
-          '<span class="btn-ghost" style="padding:2px 4px;font-size:0.7rem;">Edit ›</span>'+
-        '</div>'+
-      '</div>';
-    }).join('');
-    list.querySelectorAll('[data-tx]').forEach(function(row){
-      row.onclick = function(){
-        var tx = state.transactions.find(function(t){return t.id===row.dataset.tx;});
-        if(!tx) return;
-        modalTx({
-          type: tx.type, amount: tx.amount, date: tx.date, category: tx.category, note: tx.note,
-          accountId: tx.accountId, toAccountId: tx.toAccountId, refId: tx.refId
-        }, tx.id);
-      };
-    });
-  }
-
-  function renderAnalisa(){
-    var series = computeMonthlySeries(6);
-    var cat = computeCategoryBreakdown(90);
-    var ins = computeInsights(series, cat);
-
-    document.getElementById('anRate').textContent = (ins.savingsRate>=0?
+    if(
