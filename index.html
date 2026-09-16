@@ -378,6 +378,31 @@
   .insight-card.warn{ background:var(--brick-tint); border-color:var(--brick); }
   .insight-card b{ font-variant-numeric:tabular-nums; }
 
+  /* ---------- debt strategy ---------- */
+  .strategy-card{
+    background:var(--card); border:1px solid var(--line); border-radius:6px;
+    padding:13px 14px; margin-bottom:10px; position:relative;
+  }
+  .strategy-card.recommended{ border-color:var(--pine); border-width:2px; }
+  .strategy-head{ display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; }
+  .strategy-name{ font-family:"Fraunces",serif; font-weight:600; font-size:1rem; }
+  .strategy-badge{
+    font-size:0.65rem; font-weight:700; background:var(--pine); color:#F4EFDD;
+    padding:3px 8px; border-radius:999px; text-transform:uppercase; letter-spacing:0.03em;
+  }
+  .strategy-stats{ display:flex; gap:16px; margin-bottom:8px; }
+  .strategy-stats div{ font-size:0.78rem; }
+  .strategy-stats b{ display:block; font-family:"Fraunces",serif; font-size:1.05rem; font-weight:600; }
+  .strategy-order{ list-style:none; margin:0; padding:0; font-size:0.8rem; }
+  .strategy-order li{
+    display:flex; justify-content:space-between; padding:5px 0; border-bottom:1px dashed var(--line);
+  }
+  .strategy-order li:last-child{ border-bottom:none; }
+  .strategy-order .n{
+    display:inline-flex; align-items:center; justify-content:center; width:18px; height:18px;
+    background:var(--paper-2); border-radius:50%; font-size:0.68rem; font-weight:700; margin-right:7px;
+  }
+
   /* ---------- auth gate ---------- */
   .hidden{ display:none !important; }
   .authgate{
@@ -496,6 +521,9 @@
     <div class="section-title">Senarai hutang<small id="hutangTotal"></small></div>
     <div id="debtList"></div>
     <button class="btn btn-primary btn-block" id="btnAddDebt" style="margin-top:8px;">+ Tambah hutang</button>
+
+    <div class="section-title">Strategi bayar hutang<small>Snowball vs Avalanche</small></div>
+    <div id="debtStrategy"></div>
   </div>
 
   <!-- SIMPANAN -->
@@ -1070,7 +1098,10 @@
         '<div><label>Jumlah asal (RM)</label><input id="fTotal" type="number" step="0.01" value="'+(existing?existing.total:'')+'" placeholder="0.00"></div>'+
         '<div><label>Baki tertunggak (RM)</label><input id="fRemaining" type="number" step="0.01" value="'+(existing?existing.remaining:'')+'" placeholder="0.00"></div>'+
       '</div>'+
-      '<label>Bayaran minimum / bulan (RM, pilihan)</label><input id="fMin" type="number" step="0.01" value="'+(existing&&existing.minPayment||'')+'" placeholder="0.00">'+
+      '<div class="field-row">'+
+        '<div><label>Bayaran minimum / bulan (RM, pilihan)</label><input id="fMin" type="number" step="0.01" value="'+(existing&&existing.minPayment||'')+'" placeholder="0.00"></div>'+
+        '<div><label>Kadar faedah tahunan (%, pilihan)</label><input id="fRate" type="number" step="0.01" value="'+(existing&&existing.rate||'')+'" placeholder="Cth: 18"></div>'+
+      '</div>'+
       '<label>Sasaran tarikh selesai (pilihan)</label><input id="fTarget" type="date" value="'+(existing&&existing.targetDate||'')+'">'+
       '<div class="btn-row">'+
         (isEdit?'<button class="btn btn-danger" id="mDelete">Padam</button>':'')+
@@ -1084,11 +1115,12 @@
       var total = parseFloat(document.getElementById('fTotal').value)||0;
       var remaining = parseFloat(document.getElementById('fRemaining').value)||0;
       var minPayment = parseFloat(document.getElementById('fMin').value)||0;
+      var rate = parseFloat(document.getElementById('fRate').value)||0;
       var targetDate = document.getElementById('fTarget').value;
       if(isEdit){
-        existing.name=name; existing.total=total; existing.remaining=remaining; existing.minPayment=minPayment; existing.targetDate=targetDate;
+        existing.name=name; existing.total=total; existing.remaining=remaining; existing.minPayment=minPayment; existing.rate=rate; existing.targetDate=targetDate;
       } else {
-        state.config.debts.push({id:uid(), name:name, total:total, remaining:remaining, minPayment:minPayment, targetDate:targetDate});
+        state.config.debts.push({id:uid(), name:name, total:total, remaining:remaining, minPayment:minPayment, rate:rate, targetDate:targetDate});
       }
       await saveConfig(); closeModal(); renderAll(); toast('Hutang disimpan');
     };
@@ -1386,6 +1418,85 @@
   }
 
 
+  /* ============ debt payoff strategy (snowball vs avalanche) ============ */
+  function simulatePayoff(debts, monthlyBudget, orderFn){
+    var arr = debts.map(function(d){ return {id:d.id, name:d.name, remaining:Number(d.remaining)||0, minPayment:Number(d.minPayment)||0, rate:Number(d.rate)||0}; });
+    arr = orderFn(arr.slice());
+    var totalMin = arr.reduce(function(s,d){return s+d.minPayment;},0);
+    var extra = Math.max(0, monthlyBudget-totalMin);
+    var months = 0, totalInterest = 0, payoffOrder = [];
+    var guard = 600; // 50 years safety cap
+    while(arr.some(function(d){return d.remaining>0.01;}) && months<guard){
+      months++;
+      arr.forEach(function(d){
+        if(d.remaining>0.01 && d.rate>0){
+          var interest = d.remaining*(d.rate/100/12);
+          d.remaining += interest; totalInterest += interest;
+        }
+      });
+      var activeMin = arr.filter(function(d){return d.remaining>0.01;}).reduce(function(s,d){return s+d.minPayment;},0);
+      var freedUp = totalMin-activeMin;
+      var pool = extra+freedUp;
+      arr.forEach(function(d){
+        if(d.remaining<=0.01) return;
+        var payMin = Math.min(d.minPayment, d.remaining);
+        d.remaining -= payMin;
+      });
+      for(var i=0;i<arr.length;i++){
+        var d = arr[i];
+        if(pool<=0.01) break;
+        if(d.remaining<=0.01) continue;
+        var pay = Math.min(pool, d.remaining);
+        d.remaining -= pay; pool -= pay;
+      }
+      arr.forEach(function(d){
+        if(d.remaining<=0.01 && !payoffOrder.find(function(p){return p.id===d.id;})){
+          payoffOrder.push({id:d.id, name:d.name, month:months});
+        }
+      });
+    }
+    return {months:months>=guard?null:months, totalInterest:totalInterest, payoffOrder:payoffOrder, budgetUsed:monthlyBudget};
+  }
+  function computeDebtStrategy(){
+    var debts = state.config.debts.filter(function(d){ return (Number(d.remaining)||0)>0.01; });
+    if(!debts.length) return null;
+    var totalMin = debts.reduce(function(s,d){return s+(Number(d.minPayment)||0);},0);
+    var series = computeMonthlySeries(6);
+    var cat = computeCategoryBreakdown(90);
+    var ins = computeInsights(series, cat);
+    var budget = Math.max(totalMin, ins.avgDebtPay||0);
+    var usedRealPattern = (ins.avgDebtPay||0) > totalMin;
+    var hasRates = debts.some(function(d){ return (Number(d.rate)||0)>0; });
+
+    var snowball = simulatePayoff(debts, budget, function(arr){
+      return arr.sort(function(a,b){ return a.remaining-b.remaining; });
+    });
+    var avalanche = simulatePayoff(debts, budget, function(arr){
+      return arr.sort(function(a,b){ return b.rate-a.rate || a.remaining-b.remaining; });
+    });
+
+    var recommend, reason;
+    if(!hasRates){
+      recommend = 'snowball';
+      reason = 'Tiada kadar faedah direkod lagi, jadi anggaran faedah tidak tepat. Snowball dicadangkan sebab bayar hutang terkecil dulu bagi kemenangan cepat & motivasi berterusan. Isi kadar faedah setiap hutang untuk perbandingan yang lebih tepat.';
+    } else {
+      var interestDiff = snowball.totalInterest-avalanche.totalInterest;
+      if(interestDiff > Math.max(50, budget*0.05)){
+        recommend = 'avalanche';
+        reason = 'Avalanche menjimatkan lebih kurang '+fmtMoney(interestDiff)+' faedah berbanding Snowball, sebab hutang berkadar faedah tinggi diselesaikan dulu.';
+      } else {
+        recommend = 'snowball';
+        reason = 'Beza faedah antara dua kaedah kecil sahaja ('+fmtMoney(Math.abs(interestDiff))+'), jadi Snowball dicadangkan sebab bayar hutang terkecil dulu bagi momentum & motivasi psikologi yang lebih kuat.';
+      }
+    }
+    return {
+      budget:budget, totalMin:totalMin, usedRealPattern:usedRealPattern, hasRates:hasRates,
+      snowball:snowball, avalanche:avalanche, recommend:recommend, reason:reason,
+      snowballOrder: debts.slice().sort(function(a,b){return a.remaining-b.remaining;}),
+      avalancheOrder: debts.slice().sort(function(a,b){return (b.rate||0)-(a.rate||0) || a.remaining-b.remaining;})
+    };
+  }
+
   function renderAll(){
     renderHeader();
     renderDashboard();
@@ -1566,6 +1677,49 @@
     list.querySelectorAll('[data-edit-debt]').forEach(function(b){
       b.onclick = function(){ modalDebt(state.config.debts.find(function(d){return d.id===b.dataset.editDebt;})); };
     });
+    renderDebtStrategy();
+  }
+
+  function renderDebtStrategy(){
+    var container = document.getElementById('debtStrategy');
+    if(!container) return;
+    var s = computeDebtStrategy();
+    if(!s){
+      container.innerHTML = '<div class="card empty" style="margin-top:0;"><span class="big">🧊</span>Tambah hutang dahulu untuk lihat cadangan strategi.</div>';
+      return;
+    }
+    function orderListHtml(orderArr, order2Result){
+      return '<ol class="strategy-order">'+orderArr.map(function(d, i){
+        var po = order2Result.payoffOrder.find(function(p){return p.id===d.id;});
+        var monthLabel = po ? (po.month===1?'bulan 1':'bulan '+po.month) : '—';
+        return '<li><span><span class="n">'+(i+1)+'</span>'+esc(d.name)+' ('+fmtMoney(d.remaining)+(d.rate?', '+d.rate+'%':'')+')</span><span>selesai '+monthLabel+'</span></li>';
+      }).join('')+'</ol>';
+    }
+    var budgetNote = s.usedRealPattern
+      ? 'Bajet bulanan ('+fmtMoney(s.budget)+') dikira dari purata bayaran hutang sebenar kau 6 bulan lepas.'
+      : 'Bajet bulanan ('+fmtMoney(s.budget)+') = jumlah bayaran minimum semua hutang (belum ada corak bayaran ekstra direkod).';
+    var html = '<div class="hint" style="margin-bottom:10px;">'+budgetNote+(s.hasRates?'':' Isi kadar faedah pada tiap hutang untuk anggaran faedah yang lebih tepat.')+'</div>';
+
+    html += '<div class="strategy-card'+(s.recommend==='snowball'?' recommended':'')+'">'+
+      '<div class="strategy-head"><span class="strategy-name">❄️ Snowball</span>'+(s.recommend==='snowball'?'<span class="strategy-badge">Dicadangkan</span>':'')+'</div>'+
+      '<div class="strategy-stats">'+
+        '<div>Tempoh selesai<b>'+(s.snowball.months?s.snowball.months+' bulan':'—')+'</b></div>'+
+        (s.hasRates?'<div>Jumlah faedah<b>'+fmtMoney(s.snowball.totalInterest)+'</b></div>':'')+
+      '</div>'+
+      orderListHtml(s.snowballOrder, s.snowball)+
+    '</div>';
+
+    html += '<div class="strategy-card'+(s.recommend==='avalanche'?' recommended':'')+'">'+
+      '<div class="strategy-head"><span class="strategy-name">🏔️ Avalanche</span>'+(s.recommend==='avalanche'?'<span class="strategy-badge">Dicadangkan</span>':'')+'</div>'+
+      '<div class="strategy-stats">'+
+        '<div>Tempoh selesai<b>'+(s.avalanche.months?s.avalanche.months+' bulan':'—')+'</b></div>'+
+        (s.hasRates?'<div>Jumlah faedah<b>'+fmtMoney(s.avalanche.totalInterest)+'</b></div>':'')+
+      '</div>'+
+      orderListHtml(s.avalancheOrder, s.avalanche)+
+    '</div>';
+
+    html += '<div class="insight-card">💡 '+s.reason+'</div>';
+    container.innerHTML = html;
   }
 
   function renderSavings(){
