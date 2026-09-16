@@ -403,6 +403,24 @@
     background:var(--paper-2); border-radius:50%; font-size:0.68rem; font-weight:700; margin-right:7px;
   }
 
+  /* ---------- commitment checklist ---------- */
+  .check-row{
+    display:flex; align-items:center; gap:10px;
+    background:var(--card); border:1px solid var(--line); border-radius:6px;
+    padding:11px 12px; margin-bottom:8px;
+  }
+  .check-row.done{ border-color:var(--pine); }
+  .check-mark{
+    flex:0 0 auto; width:26px; height:26px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    border:2px solid var(--line); font-size:0.85rem; color:transparent;
+  }
+  .check-row.done .check-mark{ background:var(--pine); border-color:var(--pine); color:#F4EFDD; }
+  .check-body{ flex:1; min-width:0; }
+  .check-title{ font-weight:600; font-size:0.88rem; }
+  .check-sub{ font-size:0.72rem; color:var(--ink-soft); margin-top:1px; }
+  .check-action{ flex:0 0 auto; }
+
   /* ---------- auth gate ---------- */
   .hidden{ display:none !important; }
   .authgate{
@@ -511,6 +529,9 @@
 
   <!-- KOMITMEN -->
   <div class="page hidden" id="page-komitmen">
+    <div class="section-title">Checklist bulan ini<small id="checklistMonthLabel"></small></div>
+    <div id="commitChecklist"></div>
+
     <div class="section-title">Komitmen bulanan<small id="komitmenTotal"></small></div>
     <div id="commitList"></div>
     <button class="btn btn-primary btn-block" id="btnAddCommit" style="margin-top:8px;">+ Tambah komitmen</button>
@@ -934,6 +955,34 @@
     toast('Transaksi dibuang');
   }
 
+  async function updateTransaction(id, newTx){
+    var old = state.transactions.find(function(t){return t.id===id;});
+    if(!old) return;
+    applyEffect(old, -1);   // undo old effect on accounts/debts/savings
+    applyEffect(newTx, 1);  // apply new effect
+    await saveConfig();
+    if(supabase && currentUserId){
+      var row = {
+        date: newTx.date, type: newTx.type, amount: newTx.amount,
+        account_id: newTx.accountId||null, to_account_id: newTx.toAccountId||null, ref_id: newTx.refId||null,
+        category: newTx.category||null, note: newTx.note||null
+      };
+      var res = await supabase.from('transactions').update(row).eq('id', id).select().single();
+      if(res.error){ toast('Gagal kemaskini: '+res.error.message); return; }
+      var updated = mapTxRow(res.data);
+      var i = state.transactions.findIndex(function(t){return t.id===id;});
+      if(i>=0) state.transactions[i] = updated;
+    } else {
+      var idx = state.transactions.findIndex(function(t){return t.id===id;});
+      if(idx>=0){
+        newTx.id = id; newTx.createdAt = old.createdAt;
+        state.transactions[idx] = newTx;
+      }
+    }
+    renderAll();
+    toast('Transaksi dikemaskini');
+  }
+
   /* ============ tabs ============ */
   function switchTab(tab){
     state.activeTab = tab;
@@ -985,6 +1034,14 @@
     return state.config.savings.map(function(s){
       return '<option value="'+s.id+'" '+(s.id===selected?'selected':'')+'>'+esc(s.name)+'</option>';
     }).join('');
+  }
+  function commitmentOptions(selected){
+    var active = state.config.commitments.filter(function(c){ return c.active!==false; });
+    var opts = '<option value="">— Bukan komitmen tetap —</option>';
+    opts += active.map(function(c){
+      return '<option value="'+c.id+'" '+(c.id===selected?'selected':'')+'>'+esc(c.name)+' ('+fmtMoney(c.amount)+')</option>';
+    }).join('');
+    return opts;
   }
 
   /* ---- account modal ---- */
@@ -1230,20 +1287,16 @@
     {v:'saving_use', l:'Guna simpanan'},
     {v:'transfer', l:'Pindah antara akaun'}
   ];
-  function modalTx(prefill){
+  function modalTx(prefill, editId){
     prefill = prefill || {};
     var type = prefill.type || 'income';
-    openModal(renderTxForm(type, prefill));
-    bindTxForm(type, prefill);
+    openModal(renderTxForm(type, prefill, editId));
+    bindTxForm(type, prefill, editId);
   }
-  function renderTxForm(type, prefill){
-    var needsAccount = ['income','expense','debt_payment','saving_add','saving_use','debt_new'].indexOf(type)>=0;
-    var needsToAccount = type==='transfer';
-    var needsDebt = type==='debt_payment'||type==='debt_new';
-    var needsSaving = type==='saving_add'||type==='saving_use';
-    var needsCommitPick = type==='expense';
+  function renderTxForm(type, prefill, editId){
+    var isEdit = !!editId;
     return (
-      '<div class="modal-head"><div class="modal-title">Rekod transaksi</div><button class="btn-ghost" id="mClose">Tutup</button></div>'+
+      '<div class="modal-head"><div class="modal-title">'+(isEdit?'Kemaskini transaksi':'Rekod transaksi')+'</div><button class="btn-ghost" id="mClose">Tutup</button></div>'+
       '<label>Jenis</label><select id="fType">'+TX_TYPES.map(function(t){return '<option value="'+t.v+'" '+(t.v===type?'selected':'')+'>'+t.l+'</option>';}).join('')+'</select>'+
       '<div id="dynFields"></div>'+
       '<label>Jumlah (RM)</label><input id="fAmount" type="number" step="0.01" value="'+(prefill.amount||'')+'" placeholder="0.00">'+
@@ -1252,7 +1305,10 @@
         '<div><label>Kategori (pilihan)</label><input id="fCategory" value="'+esc(prefill.category||'')+'" placeholder="Cth: Makan"></div>'+
       '</div>'+
       '<label>Nota (pilihan)</label><input id="fNote" value="'+esc(prefill.note||'')+'" placeholder="Catatan ringkas">'+
-      '<div class="btn-row"><button class="btn btn-primary btn-block" id="mSave">Rekod</button></div>'
+      '<div class="btn-row">'+
+        (isEdit?'<button class="btn btn-danger" id="mDeleteTx">Padam</button>':'')+
+        '<button class="btn btn-primary btn-block" id="mSave">'+(isEdit?'Kemaskini':'Rekod')+'</button>'+
+      '</div>'
     );
   }
   function dynFieldsHtml(type, prefill){
@@ -1276,10 +1332,11 @@
       html += '<label>Ke akaun</label><select id="fAccount">'+accountOptions(prefill.accountId)+'</select>';
     } else if(type==='expense'){
       html += '<label>Dari akaun</label><select id="fAccount">'+accountOptions(prefill.accountId)+'</select>';
+      html += '<label>Komitmen berkaitan (pilihan)</label><select id="fRef">'+commitmentOptions(prefill.refId)+'</select>';
     }
     return html;
   }
-  function bindTxForm(type, prefill){
+  function bindTxForm(type, prefill, editId){
     document.getElementById('dynFields').innerHTML = dynFieldsHtml(type, prefill);
     document.getElementById('mClose').onclick = closeModal;
     document.getElementById('fType').onchange = function(){
@@ -1288,6 +1345,15 @@
       bindSave();
     };
     bindSave();
+    if(editId){
+      var delBtn = document.getElementById('mDeleteTx');
+      if(delBtn) delBtn.onclick = function(){
+        if(confirm('Padam transaksi ini? Baki akaun/hutang/simpanan akan diselaraskan semula.')){
+          deleteTransaction(editId);
+          closeModal();
+        }
+      };
+    }
     function bindSave(){
       document.getElementById('mSave').onclick = async function(){
         var amount = parseFloat(document.getElementById('fAmount').value)||0;
@@ -1312,7 +1378,8 @@
         }
         if((type==='debt_payment'||type==='debt_new') && !tx.refId){ toast('Sila pilih hutang'); return; }
         if((type==='saving_add'||type==='saving_use') && !tx.refId){ toast('Sila pilih sasaran simpanan'); return; }
-        await addTransaction(tx);
+        if(editId){ await updateTransaction(editId, tx); }
+        else { await addTransaction(tx); }
         closeModal();
       };
     }
@@ -1651,6 +1718,7 @@
     var list = document.getElementById('commitList');
     if(!state.config.commitments.length){
       list.innerHTML = '<div class="card empty"><span class="big">🧾</span>Belum ada komitmen bulanan.</div>';
+      renderCommitChecklist();
       return;
     }
     var sorted = state.config.commitments.slice().sort(function(a,b){return (a.dueDay||0)-(b.dueDay||0);});
@@ -1664,6 +1732,77 @@
     }).join('')+'</div>';
     list.querySelectorAll('[data-edit-commit]').forEach(function(b){
       b.onclick = function(){ modalCommit(state.config.commitments.find(function(c){return c.id===b.dataset.editCommit;})); };
+    });
+    renderCommitChecklist();
+  }
+
+  function computeCommitmentChecklist(monthKey){
+    var active = state.config.commitments.filter(function(c){ return c.active!==false; });
+    return active.slice().sort(function(a,b){return (a.dueDay||0)-(b.dueDay||0);}).map(function(c){
+      var matches = state.transactions.filter(function(tx){
+        return tx.type==='expense' && tx.refId===c.id && (tx.date||'').slice(0,7)===monthKey;
+      });
+      var paidAmount = matches.reduce(function(s,tx){return s+(Number(tx.amount)||0);},0);
+      return {
+        commitment:c, paidAmount:paidAmount, isPaid: paidAmount >= (Number(c.amount)||0) - 0.01,
+        isPartial: paidAmount>0 && paidAmount < (Number(c.amount)||0) - 0.01,
+        remaining: Math.max(0, (Number(c.amount)||0)-paidAmount),
+        lastTx: matches.length ? matches[matches.length-1] : null
+      };
+    });
+  }
+
+  function renderCommitChecklist(){
+    var container = document.getElementById('commitChecklist');
+    if(!container) return;
+    var monthKey = todayStr().slice(0,7);
+    var bulanNama=['Januari','Februari','Mac','April','Mei','Jun','Julai','Ogos','September','Oktober','November','Disember'];
+    var labelEl = document.getElementById('checklistMonthLabel');
+    if(labelEl) labelEl.textContent = bulanNama[parseInt(monthKey.split('-')[1],10)-1]+' '+monthKey.split('-')[0];
+
+    var rows = computeCommitmentChecklist(monthKey);
+    if(!rows.length){
+      container.innerHTML = '<div class="card empty" style="margin-top:0;"><span class="big">✅</span>Tiada komitmen aktif untuk disemak.</div>';
+      return;
+    }
+    var doneCount = rows.filter(function(r){return r.isPaid;}).length;
+    var summary = '<div class="hint" style="margin-bottom:8px;">'+doneCount+' / '+rows.length+' komitmen sudah dibayar bulan ini.</div>';
+    var html = rows.map(function(r){
+      var c = r.commitment;
+      var statusSub = r.isPaid
+        ? 'Sudah bayar '+fmtMoney(r.paidAmount)+(r.lastTx?' · '+fmtDateHuman(r.lastTx.date):'')
+        : (r.isPartial ? 'Baru bayar '+fmtMoney(r.paidAmount)+' — baki '+fmtMoney(r.remaining) : 'Belum dibayar · setiap '+(c.dueDay||'-')+'hb');
+      var actionBtn = r.isPaid
+        ? '<button class="btn-ghost" data-check-view="'+c.id+'" style="font-size:0.72rem;padding:4px 8px;">Lihat</button>'
+        : '<button class="btn btn-primary" data-check-pay="'+c.id+'" style="font-size:0.75rem;padding:7px 10px;">'+(r.isPartial?'Bayar baki':'Tandakan bayar')+'</button>';
+      return '<div class="check-row'+(r.isPaid?' done':'')+'">'+
+        '<div class="check-mark">✓</div>'+
+        '<div class="check-body"><div class="check-title">'+esc(c.name)+'</div><div class="check-sub">'+statusSub+'</div></div>'+
+        '<div class="check-action">'+actionBtn+'</div>'+
+      '</div>';
+    }).join('');
+    container.innerHTML = summary+html;
+
+    container.querySelectorAll('[data-check-pay]').forEach(function(b){
+      b.onclick = function(){
+        var c = state.config.commitments.find(function(x){return x.id===b.dataset.checkPay;});
+        if(!c) return;
+        var row = computeCommitmentChecklist(monthKey).find(function(r){return r.commitment.id===c.id;});
+        var amt = row && row.isPartial ? row.remaining : c.amount;
+        modalTx({ type:'expense', amount:amt, category:c.name, refId:c.id, date:todayStr(), accountId:state.config.profile.defaultAccountId });
+      };
+    });
+    container.querySelectorAll('[data-check-view]').forEach(function(b){
+      b.onclick = function(){
+        var row = computeCommitmentChecklist(monthKey).find(function(r){return r.commitment.id===b.dataset.checkView;});
+        if(row && row.lastTx){
+          var tx = row.lastTx;
+          modalTx({
+            type: tx.type, amount: tx.amount, date: tx.date, category: tx.category, note: tx.note,
+            accountId: tx.accountId, toAccountId: tx.toAccountId, refId: tx.refId
+          }, tx.id);
+        }
+      };
     });
   }
 
@@ -1870,99 +2009,5 @@
         '</div>'+
         '<div style="text-align:right;">'+
           '<div class="ledger-amt '+(txIsIn(tx)?'amt-in':'amt-out')+'">'+(txIsIn(tx)?'+':'-')+fmtMoney(tx.amount)+'</div>'+
-          '<button class="btn-ghost" data-del-tx="'+tx.id+'" style="padding:2px 4px;font-size:0.7rem;">Padam</button>'+
-        '</div>'+
-      '</div>';
-    }).join('');
-    list.querySelectorAll('[data-del-tx]').forEach(function(b){
-      b.onclick = function(e){
-        e.stopPropagation();
-        if(confirm('Padam transaksi ini? Baki akaun/hutang/simpanan akan diselaraskan semula.')){
-          deleteTransaction(b.dataset.delTx);
-        }
-      };
-    });
-  }
-
-  function renderAnalisa(){
-    var series = computeMonthlySeries(6);
-    var cat = computeCategoryBreakdown(90);
-    var ins = computeInsights(series, cat);
-
-    document.getElementById('anRate').textContent = (ins.savingsRate>=0?'':'-')+Math.abs(ins.savingsRate).toFixed(0)+'%';
-    document.getElementById('anAvgExpense').textContent = fmtMoneyShort(ins.avgExpense);
-    document.getElementById('anTopCat').textContent = ins.topCategory ? esc(ins.topCategory.name) : '—';
-    var netEl = document.getElementById('anNet');
-    netEl.textContent = fmtMoneyShort(ins.netTotal);
-    netEl.parentElement.classList.toggle('debt', ins.netTotal<0);
-
-    // cashflow bars
-    var maxVal = 1;
-    series.forEach(function(m){ maxVal = Math.max(maxVal, m["in"], m.out); });
-    document.getElementById('cashflowBars').innerHTML = series.map(function(m){
-      var hIn = Math.round((m["in"]/maxVal)*100);
-      var hOut = Math.round((m.out/maxVal)*100);
-      var netClass = m.net>0?'pos':(m.net<0?'neg':'');
-      return '<div class="bar-col">'+
-        '<div class="net '+netClass+'">'+(m.net>=0?'+':'-')+fmtMoneyShort(Math.abs(m.net))+'</div>'+
-        '<div class="bar-pair">'+
-          '<div class="bar" style="height:'+Math.max(hIn,2)+'%;" title="Masuk"></div>'+
-          '<div class="bar out" style="height:'+Math.max(hOut,2)+'%;" title="Keluar"></div>'+
-        '</div>'+
-        '<div class="lbl">'+m.label+'</div>'+
-      '</div>';
-    }).join('');
-
-    // category breakdown
-    var catDiv = document.getElementById('catBreakdown');
-    if(!cat.items.length){
-      catDiv.innerHTML = '<div class="empty"><span class="big">📊</span>Belum cukup data perbelanjaan 90 hari ini.</div>';
-    } else {
-      catDiv.innerHTML = cat.items.slice(0,6).map(function(c){
-        var pct = cat.total>0 ? (c.amount/cat.total*100) : 0;
-        return '<div class="cat-row">'+
-          '<div class="cat-top"><span class="nm">'+esc(c.name)+'</span><span class="pct">'+fmtMoney(c.amount)+' · '+pct.toFixed(0)+'%</span></div>'+
-          '<div class="progress-track"><div class="progress-fill brick" style="width:'+pct.toFixed(1)+'%;"></div></div>'+
-        '</div>';
-      }).join('');
-    }
-
-    // insights
-    var cards = [];
-    if(ins.activeMonths===0){
-      cards.push('<div class="insight-card">Belum cukup transaksi untuk dianalisa. Rekod pendapatan &amp; perbelanjaan beberapa kali dahulu.</div>');
-    } else {
-      cards.push('<div class="insight-card'+(ins.savingsRate<0?' warn':'')+'">Kadar simpanan purata anda sejak '+ins.activeMonths+' bulan lalu ialah <b>'+ins.savingsRate.toFixed(0)+'%</b> daripada pendapatan'+(ins.savingsRate<0?' — perbelanjaan melebihi pendapatan.':'.')+'</div>');
-      if(ins.topCategory){
-        cards.push('<div class="insight-card">Perbelanjaan terbesar 90 hari ini: <b>'+esc(ins.topCategory.name)+'</b> ('+fmtMoney(ins.topCategory.amount)+').</div>');
-      }
-      if(ins.monthsToPayoff){
-        cards.push('<div class="insight-card">Dengan purata bayaran <b>'+fmtMoney(ins.avgDebtPay)+'</b>/bulan, hutang dijangka selesai dalam <b>~'+ins.monthsToPayoff+' bulan</b>.</div>');
-      } else if(totals().debtRem>0){
-        cards.push('<div class="insight-card warn">Ada baki hutang tapi belum ada rekod bayaran hutang bulan-bulan ini — sukar anggar tempoh selesai.</div>');
-      }
-      if(ins.monthsToEf){
-        cards.push('<div class="insight-card">Ikut kadar simpanan semasa (<b>'+fmtMoney(ins.avgSavingNet)+'</b>/bulan), dana kecemasan dijangka cukup dalam <b>~'+ins.monthsToEf+' bulan</b>.</div>');
-      }
-    }
-    document.getElementById('insightsBlock').innerHTML = cards.join('');
-  }
-
-  function renderSettings(){
-    var p = state.config.profile;
-    var elA = document.getElementById('setSalaryAmount');
-    var elD = document.getElementById('setSalaryDay');
-    if(document.activeElement!==elA) elA.value = p.salaryAmount||'';
-    if(document.activeElement!==elD) elD.value = p.salaryDay||28;
-    var sel = document.getElementById('setSalaryAccount');
-    sel.innerHTML = '<option value="">— Tiada —</option>'+accountOptions(p.defaultAccountId);
-  }
-
-  /* ============ boot ============ */
-  initAuth();
-  renderAll();
-  switchTab('dashboard');
-})();
-</script>
-</body>
-</html>
+          '<span class="btn-ghost" style="padding:2px 4px;font-size:0.7rem;">Edit ›</span>'+
+ 
